@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -7,15 +7,19 @@ use crate::data_type::DataType;
 
 use super::_base::Provider;
 
-fn get_time() -> (u8, u8) {
+fn get_time() -> (u8, u8, u8) {
     let now: DateTime<Local> = Local::now();
     let hour = now.hour() as u8;
     let minute = now.minute() as u8;
-    return (hour, minute);
+    // Extra byte for keyboards that show the weekday: 1 = Monday .. 7 = Sunday
+    // (0 stays free to mean "not sent", since reports are zero-padded).
+    // Firmware that only reads hour and minute ignores it.
+    let weekday = now.weekday().number_from_monday() as u8;
+    return (hour, minute, weekday);
 }
 
-fn send_data(value: &(u8, u8), host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
-    let data = vec![DataType::Time as u8, value.0, value.1];
+fn send_data(value: &(u8, u8, u8), host_to_device_sender: &broadcast::Sender<Vec<u8>>) {
+    let data = vec![DataType::Time as u8, value.0, value.1, value.2];
     if let Err(e) = host_to_device_sender.send(data) {
         tracing::error!("Time Provider failed to send data: {:?}", e);
     }
@@ -43,7 +47,7 @@ impl Provider for TimeProvider {
         let host_to_device_sender = self.host_to_device_sender.clone();
         let is_started = self.is_started.clone();
         std::thread::spawn(move || {
-            let mut synced_time = (0u8, 0u8);
+            let mut synced_time = (0u8, 0u8, 0u8);
             loop {
                 if !is_started.load(Relaxed) {
                     break;
