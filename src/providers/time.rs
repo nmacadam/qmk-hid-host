@@ -70,3 +70,4 @@ impl Provider for TimeProvider {
         self.is_started.store(false, Relaxed);
     }
 }
+
