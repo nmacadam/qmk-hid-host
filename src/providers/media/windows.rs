@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use windows::{
     Foundation::{EventRegistrationToken, TypedEventHandler},
-    Media::Control::{GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager},
+    Media::Control::{
+        GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    },
 };
 
 use crate::data_type::DataType;
@@ -69,6 +72,25 @@ fn get_media_data(session: &GlobalSystemMediaTransportControlsSession) -> Option
     None
 }
 
+/// 0 = nothing playing (no session, stopped, closed), 1 = paused, 2 = playing.
+fn get_state(manager: &GlobalSystemMediaTransportControlsSessionManager) -> u8 {
+    let status = manager
+        .GetCurrentSession()
+        .and_then(|session| session.GetPlaybackInfo())
+        .and_then(|info| info.PlaybackStatus());
+    match status {
+        Ok(s) if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing => 2,
+        Ok(s) if s == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Paused => 1,
+        _ => 0,
+    }
+}
+
+fn send_state(state: u8, data_sender: &broadcast::Sender<Vec<u8>>) {
+    if let Err(e) = data_sender.send(vec![DataType::MediaState as u8, state]) {
+        tracing::error!("Can not send data: {}", e);
+    }
+}
+
 fn send_data(data_type: DataType, value: &String, data_sender: &broadcast::Sender<Vec<u8>>) {
     let mut data = value.to_string().into_bytes();
     data.truncate(30);
@@ -105,6 +127,7 @@ impl Provider for MediaProvider {
         let is_started = self.is_started.clone();
         std::thread::spawn(move || {
             let mut session_token: Option<EventRegistrationToken> = None;
+            let state_sender = data_sender.clone();
 
             if let Ok(manager) = get_manager() {
                 if let Some(session) = manager.GetCurrentSession().ok() {
@@ -127,10 +150,23 @@ impl Provider for MediaProvider {
                     .CurrentSessionChanged(&handler)
                     .map_err(|e| tracing::error!("Can not register CurrentSessionChanged callback: {}", e));
 
+                // Play/pause state: polled once a second, sent when it changes
+                // (and once at start, so a newly connected keyboard gets it).
+                let mut synced_state: Option<u8> = None;
+                let mut ticks = 0u32;
                 loop {
                     if !is_started.load(Relaxed) {
                         break;
                     }
+
+                    if ticks % 10 == 0 {
+                        let state = get_state(&manager);
+                        if synced_state != Some(state) {
+                            send_state(state, &state_sender);
+                            synced_state = Some(state);
+                        }
+                    }
+                    ticks = ticks.wrapping_add(1);
 
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }

@@ -8,6 +8,7 @@ pub enum DataType {
     Weather = 0xAF,
     MediaPlayerLinux = 0xB0,
     MediaExtended = 0xB1,
+    MediaState = 0xB2, // [0xB2, state]: 0 = nothing playing, 1 = paused, 2 = playing
 
     RelayFromDevice = 0xCC,
     RelayToDevice,
