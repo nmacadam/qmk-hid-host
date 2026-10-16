@@ -44,6 +44,7 @@ version = "0.56"
 features = [
     "implement",
     "Foundation",
+    "Foundation_Collections",
     "Media_Control",
     "Win32_Globalization",
     "Win32_Foundation",
